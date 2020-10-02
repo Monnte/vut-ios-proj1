@@ -1,2 +1,2 @@
-## Operačné sýstemy
+## Operačné systémy
 Projekt č.1
