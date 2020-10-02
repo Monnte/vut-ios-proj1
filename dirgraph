@@ -1,0 +1,204 @@
+#!/bin/sh
+export POSIXLY_CORRECT=yes
+
+#Author: Peter Zdravecký
+#Date: 26.3.2020
+
+################################
+#Variables
+
+IGNORE=''
+NORMALIZATION=0
+DIR=$PWD
+ND=1
+NF=0
+HELP=$(printf "usage:\t%s [-i FILE_ERE] [-n] [DIR]" "$0")
+
+################################
+#COUNTERS
+
+L100B=0
+L1KiB=0
+L10KiB=0
+L100KiB=0
+L1MiB=0
+L10MiB=0
+L100MiB=0
+L1GiB=0
+G1GiB=0
+
+################################
+# Print Error Function
+
+printerr() { # Argument $1 - error message , Argument $2 - if == printhelp - then print help
+	if [ "$1" != "" ]; then
+		echo "$1" >&2
+	fi
+	if [ "$2" = "printhelp" ]; then
+		echo "$HELP" >&2
+	fi
+	exit 1
+}
+
+################################
+#Parse Arguments
+
+while getopts i:n option; do
+	case "$option" in
+	i)
+		IGNORE="$OPTARG"
+		;;
+	n)
+		NORMALIZATION=1
+		;;
+	*)
+		printerr "" "printhelp"
+		;;
+	esac
+done
+
+#Shift OPTIONS
+OPTIND=$((OPTIND - 1))
+shift $OPTIND
+
+#Arguments Check
+
+if [ "$1" != "" ] && [ -d "$1" ]; then #If parameter exists, use as base folder
+	DIR="$1"
+elif [ "$1" != "" ] && [ ! -d "$1" ]; then
+	printerr "The directory name is invalid. - $1" "printhelp"
+fi
+
+if [ ! -z "$IGNORE" ]; then #Check regex in root directroy
+	if echo "${DIR##*/}" | grep -qE "$IGNORE" 2>/dev/null; then
+		printerr "Argument in option -i can't be substring of root directory!" "printhelp"
+	fi
+fi
+
+################################
+#Functions
+
+LoopDir() {
+	ERR="Something went wrong. Could not open directory."
+
+	cd "$1" || printerr "$ERR"
+	for f in * .*; do #Loop trought directory - including hidden files
+		if [ "$f" = "." ] || [ "$f" = ".." ]; then #Skip "." and ".." directories
+			continue
+		fi
+
+		if [ ! -z "$IGNORE" ]; then #Check regex in file name if -i option is used
+			if echo "$f" | grep -qE "$IGNORE" 2>/dev/null; then
+				continue
+			fi
+		fi
+
+		if [ ! -r "$f" ]; then #Skip unreadable files
+			continue
+		fi
+
+		if [ -d "$f" ]; then #Directory Count
+			ND=$((ND + 1))
+			LoopDir "$f"          #Recursivly loop trought sub dir
+		elif [ -f "$f" ]; then #File Count
+			NF=$((NF + 1))
+
+			#Check Size of File and add to counter
+			size=$(wc -c <"$f" | xargs)
+			if [ "$size" -lt 100 ]; then
+				L100B=$((L100B + 1))
+			elif [ "$size" -lt 1024 ]; then
+				L1KiB=$((L1KiB + 1))
+			elif [ "$size" -lt 10240 ]; then
+				L10KiB=$((L10KiB + 1))
+			elif [ "$size" -lt 102400 ]; then
+				L100KiB=$((L100KiB + 1))
+			elif [ "$size" -lt 1048576 ]; then
+				L1MiB=$((L1MiB + 1))
+			elif [ "$size" -lt 10485760 ]; then
+				L10MiB=$((L10MiB + 1))
+			elif [ "$size" -lt 104857600 ]; then
+				L100MiB=$((L100MiB + 1))
+			elif [ "$size" -lt 1073741824 ]; then
+				L1GiB=$((L1GiB + 1))
+			elif [ "$size" -ge 1073741824 ]; then
+				G1GiB=$((G1GiB + 1))
+			fi
+		fi
+	done
+	cd .. || printerr "$ERR"
+
+	return
+}
+
+################################
+
+Normalization() {
+
+	LINE_LEN=79
+	if [ -t 1 ]; then #Set line len
+		LINE_LEN=$(tput cols)
+		LINE_LEN=$((LINE_LEN - 1))
+	fi
+
+	MAX_HASH_IN_LINE=$L100B
+
+	for value in $L100B $L1KiB $L10KiB $L100KiB $L1MiB $L10MiB $L100MiB $L1GiB $G1GiB; do #Loop through values to find max
+		if [ $value -gt $MAX_HASH_IN_LINE ]; then
+			MAX_HASH_IN_LINE=$value
+		fi
+	done
+
+	USED_LEN=12
+	LONGEST_LINE_LEN=$((MAX_HASH_IN_LINE + USED_LEN))
+	if [ $LONGEST_LINE_LEN -gt $LINE_LEN ]; then
+		SCALE=$(((LINE_LEN - USED_LEN) * 1000 / MAX_HASH_IN_LINE))
+		for value in L100B L1KiB L10KiB L100KiB L1MiB L10MiB L100MiB L1GiB G1GiB; do
+			tmp=0
+			eval tmp=\$$value
+			if [ "$tmp" -ne 0 ]; then                       #Scale non zero values
+				eval $value=$(((($value * SCALE) / 1000) + 1)) # + 1 to cail values
+			fi
+		done
+	fi
+}
+
+################################
+
+LoopPrintSymbol() {
+	COUNT=$1
+	SYMBOL=$2
+	while [ "$COUNT" -ne 0 ]; do
+		printf '%s' "$SYMBOL"
+		COUNT=$((COUNT - 1))
+	done
+	printf "\n"
+}
+
+################################
+#Main
+
+LoopDir "$DIR"
+
+if [ "$NORMALIZATION" -eq 1 ]; then
+	Normalization
+fi
+
+echo "Root directory: $DIR"
+echo "Directories: $ND"
+echo "All files: $NF"
+
+echo "File size histogram:"
+printf "  <100 B  : " ;LoopPrintSymbol "$L100B"   "#"
+printf "  <1 KiB  : " ;LoopPrintSymbol "$L1KiB"   "#"
+printf "  <10 KiB : " ;LoopPrintSymbol "$L10KiB"  "#"
+printf "  <100 KiB: " ;LoopPrintSymbol "$L100KiB" "#"
+printf "  <1 MiB  : " ;LoopPrintSymbol "$L1MiB"   "#"
+printf "  <10 MiB : " ;LoopPrintSymbol "$L10MiB"  "#"
+printf "  <100 MiB: " ;LoopPrintSymbol "$L100MiB" "#"
+printf "  <1 GiB  : " ;LoopPrintSymbol "$L1GiB"   "#"
+printf "  >=1 GiB : " ;LoopPrintSymbol "$G1GiB"   "#"
+
+
+################################
+
